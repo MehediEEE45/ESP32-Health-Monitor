@@ -14,6 +14,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <PubSubClient.h>
+#define MQTT_MAX_PACKET_SIZE 512  // Increase buffer to avoid silent drops
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <WiFiMulti.h>
@@ -252,9 +253,10 @@ void reconnectMQTT() {
       String clientId = "ESP32Health-" + String(random(0xffff), HEX);
       if (mqttClient.connect(clientId.c_str(), mqtt_user, mqtt_pass)) {
         Serial.println("CONNECTED!");
-        // Subscribe to current patient topics
-        mqttClient.subscribe(patientTopic(currentPatient, "feedback").c_str());
-        mqttClient.subscribe(patientTopic(currentPatient, "status").c_str());
+        // Subscribe to wildcard for current patient (catches ALL subtopics reliably)
+        String wildcard = String("group08/health/patient") + currentPatient + "/#";
+        bool ok = mqttClient.subscribe(wildcard.c_str(), 1); // QoS 1 = at-least-once delivery
+        Serial.printf("[MQTT] Subscribed to %s: %s\n", wildcard.c_str(), ok ? "OK" : "FAIL");
         // Announce device online
         mqttClient.publish(patientTopic(currentPatient, "status").c_str(), "DEVICE ONLINE");
       } else {
@@ -306,12 +308,22 @@ void loop() {
   unsigned long now = millis();
 
   // ----- WiFi & MQTT Maintenance -----
-  if (wifiMulti.run() != WL_CONNECTED) {
+  // Use WiFi.status() NOT wifiMulti.run() in the main loop.
+  // wifiMulti.run() scans all APs and blocks for hundreds of ms,
+  // which starves mqttClient.loop() and causes connection drops.
+  if (WiFi.status() != WL_CONNECTED) {
     wifiConnected = false;
+    // Try reconnecting WiFi every 10 seconds
+    static unsigned long lastWifiRetry = 0;
+    if (millis() - lastWifiRetry > 10000) {
+      lastWifiRetry = millis();
+      Serial.println("[WiFi] Reconnecting...");
+      wifiMulti.run(); // Only call it here, not every loop iteration
+    }
   } else {
     wifiConnected = true;
     if (!mqttClient.connected()) reconnectMQTT();
-    mqttClient.loop(); // Process incoming messages (feedback!)
+    mqttClient.loop(); // MUST run frequently: processes all incoming messages incl. feedback
   }
 
   // ----- Button Handling -----
