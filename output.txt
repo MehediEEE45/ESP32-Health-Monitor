@@ -1,0 +1,152 @@
+Shahjalal University of Science and Technology,
+Sylhet
+Department of Electrical and Electronic Engineering
+Project Proposal
+IoT-Based Health Monitoring System Using ESP32
+Course code: EEE 330
+Course Name: Basic Communication Engineering Lab
+Submitted by
+Group : 08
+Reg no.: 2021338043,
+2021338044,
+2021338045,
+2021338046,
+2021338047
+Session: 2021-22
+Submitted to
+Mohona Das Gupta
+Lecturer
+Department of EEE,SUST
+Submission Date:
+03/02/2026
+Contents
+1 Introduction 2
+2 Problem Statement 2
+3 Objectives of the Project 2
+4 System Overview 2
+5 Block Diagram of the Proposed System 3
+6 Circuit Diagram 4
+7 Printed Circuit Board (PCB) Design 5
+8 Hardware Components 6
+9 Methodology 6
+10 Estimated Project Cost 7
+11 Patient Benefit and Application 7
+12 Conclusion 8
+1
+1. Introduction
+The rapid advancement of Internet of Things (IoT) technology has enabled modern
+healthcare systems to provide continuous and remote monitoring of patients. Elderly,
+chronically ill, and post-operative patients often require continuous health observation,
+which is difficult to ensure using traditional hospital-based systems. This issue is more
+prominent in developing countries like Bangladesh, especially in rural and isolated areas.
+This project proposes a portable IoT-based health monitoring system using ESP32
+that can monitor vital physiological parameters and transmit real-time data to caregivers
+or medical professionals.
+2. Problem Statement
+Traditional healthcare monitoring systems face several challenges:
+•Lack of continuous monitoring outside hospitals
+•High healthcare costs
+•Limited accessibility in rural areas
+•Delayed emergency response
+3. Objectives of the Project
+•Design a portable health monitoring system using ESP32
+•Measure heart rate, SpO 2, and body temperature
+•Transmit real-time data using Wi-Fi
+•Store and visualize data on an IoT cloud platform
+•Generate alerts during abnormal health conditions
+4. System Overview
+The system consists of biomedical sensors connected to an ESP32 microcontroller. Sen-
+sor data is processed and transmitted wirelessly to an IoT cloud platform for remote
+monitoring.
+2
+5. Block Diagram of the Proposed System
+Figure 1: Block Diagram of the IoT-Based Health Monitoring System
+The block diagram illustrates the complete architecture of the IoT-based health moni-
+toring system. The MAX30102 sensor measures heart rate and blood oxygen saturation
+(SpO2), while the temperature sensor continuously monitors body temperature. These
+sensors interface with the ESP32 microcontroller through I2C and analog communication
+protocols. The ESP32 processes the acquired physiological data and displays real-time
+health parameters on the OLED screen for local monitoring. Simultaneously, the pro-
+cessed data is transmitted wirelessly via Wi-Fi to a cloud platform such as ThingSpeak
+or Blynk, enabling remote access for healthcare professionals and family members. The
+system incorporates an alert mechanism using a buzzer and LED indicator that activates
+when vital parameters exceed predefined threshold values, ensuring immediate attention
+during critical health conditions. The entire system operates on a portable Li-ion battery
+with regulated power supply, making it suitable for continuous monitoring in home-based
+and ambulatory care settings.
+3
+6. Circuit Diagram
+Figure 2: Circuit Diagram of the Proposed System
+The circuit diagram presents the detailed electrical connections and interfacing archi-
+tecture of the health monitoring system. The ESP32 microcontroller serves as the cen-
+tral processing unit, operating at 3.3V logic level. The MAX30102 pulse oximetry sen-
+sor is connected to the ESP32 via the I2C communication protocol, utilizing the SDA
+(GPIO21) and SCL (GPIO22) pins for bidirectional data transfer. The temperature sen-
+sor (DS18B20 or LM35) interfaces through an analog input pin (ADC1) with appropriate
+pull-up resistors to ensure accurate temperature readings. The 0.96-inch OLED display
+is also connected via I2C, sharing the same communication bus with the MAX30102
+sensor. The alert system consists of an active buzzer and LED connected to digital
+output pins through current-limiting resistors and NPN transistors for proper current
+handling. A 3.7V Li-ion battery powers the entire system through a voltage regulator
+module (AMS1117-3.3V or similar) that provides stable 3.3V supply to all components.
+The circuit incorporates decoupling capacitors near the power pins of each IC to minimize
+noise and ensure stable operation during wireless data transmission.
+4
+7. Printed Circuit Board (PCB) Design
+Figure 3: PCB Layout of the IoT-Based Health Monitoring System
+The PCB design provides a compact and professional implementation of the health mon-
+itoring system, eliminating the need for breadboard connections and ensuring reliable
+long-term operation. The PCB layout is designed as a double-sided board with dimen-
+sions of approximately 70mm×50mm to maintain portability. The top layer accommo-
+dates the ESP32 module, sensor breakout boards, and OLED display, while the bottom
+layer houses the voltage regulator circuit and power management components. Dedicated
+ground planes are incorporated on both layers to minimize electromagnetic interference
+and provide a stable reference voltage for analog sensor readings. The I2C bus traces
+are routed with equal lengths to prevent signal skew and maintain communication in-
+tegrity. Proper trace width calculations ensure adequate current handling capacity for
+power lines, with wider traces (1.5mm) used for the battery supply and regulated 3.3V
+rails. Through-hole vias connect the top and bottom layers at strategic points for ground
+connections and signal routing. The PCB includes mounting holes for secure installation
+in a protective enclosure, and connector pads are provided for easy battery replacement
+and sensor attachment. This professional PCB implementation enhances system relia-
+bility, reduces noise susceptibility, and provides a production-ready design suitable for
+practical deployment.
+5
+8. Hardware Components
+•ESP32 Microcontroller
+•MAX30102 Heart Rate and SpO 2 Sensor
+•LM35 / DS18B20 Temperature Sensor
+•OLED Display
+•Li-ion Battery
+•Voltage Regulator
+•Buzzer and LED
+9. Methodology
+1. Sensor interfacing with ESP32
+2. Data acquisition and processing
+3. Wireless data transmission to cloud
+4. Cloud-based data visualization
+5. Alert generation
+6
+10. Estimated Project Cost
+Table 1: Estimated Project Cost in Bangladeshi Taka (BDT)
+Sl. No. Component Qty. Unit Price (BDT) Total (BDT)
+1 ESP32 Development Board 1 900 900
+2 MAX30102 Sensor 1 650 650
+3 Temperature Sensor 1 150 150
+4 OLED Display 1 350 350
+5 Li-ion Battery 1 300 300
+6 Voltage Regulator Module 1 120 120
+7 Buzzer 1 50 50
+8 LED and Resistors 1 set 50 50
+9 Wires and Breadboard 1 set 200 200
+10 PCB / Project Box 1 250 250
+Total Estimated Cost 3,020
+11. Patient Benefit and Application
+Figure 4: Application of the Proposed System for Home-Based Patient Care
+7
+The system enables continuous health monitoring at home, reducing hospital visits and
+improving patient safety.
+12. Conclusion
+This project presents a portable IoT-based health monitoring framework using ESP32
+that provides a low-cost and efficient solution for isolated and home-based patient care.
+8
