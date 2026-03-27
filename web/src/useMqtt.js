@@ -10,7 +10,10 @@ const MQTT_OPTIONS = {
   reconnectPeriod: 3000,
 };
 
-// Generates the MQTT topic set for a given patient number
+// Backend API base URL (change to deployed URL for production)
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+// Generates MQTT topic set for a given patient number
 export function getTopics(patient) {
   const base = `group08/health/patient${patient}`;
   return {
@@ -33,32 +36,92 @@ export function useMqtt(activePatient) {
     { type: 'system', text: 'Doctor portal connected. Waiting for patient data...', time: new Date().toLocaleTimeString() }
   ]);
   const [history, setHistory] = useState([]);
+  const [stats, setStats] = useState(null);
 
-  // Keep ref in sync with prop
+  // Keep ref in sync
   useEffect(() => { activePatientRef.current = activePatient; }, [activePatient]);
 
-  // When activePatient changes, re-subscribe to new topics & reset vitals
+  // Fetch historical data and stats from backend whenever patient changes
   useEffect(() => {
-    const client = clientRef.current;
-    if (!client || !connected) return;
-
-    // Unsubscribe all old patient topics
-    for (let p = 1; p <= 3; p++) {
-      Object.values(getTopics(p)).forEach(t => client.unsubscribe(t));
+    async function fetchHistory() {
+      try {
+        const res = await fetch(`${API_BASE}/api/history/${activePatient}?hours=24`);
+        if (res.ok) {
+          const json = await res.json();
+          const loaded = json.data.map(d => {
+            const t = new Date(d.time);
+            return {
+              time: `${t.getHours()}:${String(t.getMinutes()).padStart(2,'0')}`,
+              bpm: d.bpm, spo2: d.spo2, temp: d.temp,
+            };
+          });
+          setHistory(loaded.slice(-60)); // Show last 60 data points
+          if (loaded.length > 0) {
+            setMessages(m => [...m, {
+              type: 'system',
+              text: `Loaded ${json.count} historical records for Patient ${activePatient}`,
+              time: new Date().toLocaleTimeString()
+            }]);
+          }
+        }
+      } catch (err) {
+        console.log('[API] Backend not available, using live data only:', err.message);
+      }
     }
-    // Subscribe to new patient topics
-    const topics = getTopics(activePatient);
-    Object.values(topics).forEach(t => client.subscribe(t));
+
+    async function fetchStats() {
+      try {
+        const res = await fetch(`${API_BASE}/api/stats/${activePatient}`);
+        if (res.ok) {
+          const json = await res.json();
+          setStats(json);
+        }
+      } catch (err) { /* backend offline, skip */ }
+    }
+
+    async function fetchFeedback() {
+      try {
+        const res = await fetch(`${API_BASE}/api/feedback/${activePatient}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.data && json.data.length > 0) {
+            const pastMsgs = json.data.reverse().map(f => ({
+              type: 'doctor',
+              text: f.message,
+              time: new Date(f.time).toLocaleTimeString()
+            }));
+            setMessages(m => [m[0], ...pastMsgs, ...m.slice(1)]);
+          }
+        }
+      } catch (err) { /* backend offline, skip */ }
+    }
 
     // Reset vitals for fresh patient view
     setVitals({ bpm: '--', spo2: '--', temp: '--' });
     setAlertMsg('NORMAL');
     setHistory([]);
-    setMessages(m => [...m, {
+    setStats(null);
+    setMessages([{
       type: 'system',
-      text: `Switched to Patient ${activePatient}`,
+      text: `Switched to Patient ${activePatient}. Loading history...`,
       time: new Date().toLocaleTimeString()
     }]);
+
+    fetchHistory();
+    fetchStats();
+    fetchFeedback();
+  }, [activePatient]);
+
+  // MQTT re-subscription when patient changes
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!client || !connected) return;
+
+    for (let p = 1; p <= 3; p++) {
+      Object.values(getTopics(p)).forEach(t => client.unsubscribe(t));
+    }
+    const topics = getTopics(activePatient);
+    Object.values(topics).forEach(t => client.subscribe(t));
   }, [activePatient, connected]);
 
   // Initial MQTT connection (runs once)
@@ -68,7 +131,6 @@ export function useMqtt(activePatient) {
 
     client.on('connect', () => {
       setConnected(true);
-      // Subscribe to initial patient topics
       const topics = getTopics(activePatientRef.current);
       Object.values(topics).forEach(t => client.subscribe(t));
     });
@@ -96,7 +158,7 @@ export function useMqtt(activePatient) {
               spo2: parseFloat(topic === TOPICS.spo2 ? val : prev.spo2) || 0,
               temp: parseFloat(topic === TOPICS.temp ? val : prev.temp) || 0,
             };
-            return [...h.slice(-29), point];
+            return [...h.slice(-59), point]; // keep last 60 points
           });
         }
         return next;
@@ -120,5 +182,5 @@ export function useMqtt(activePatient) {
     }
   }, []);
 
-  return { connected, vitals, alertMsg, messages, history, sendFeedback };
+  return { connected, vitals, alertMsg, messages, history, stats, sendFeedback };
 }

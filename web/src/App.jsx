@@ -105,7 +105,7 @@ function FeedbackPanel({ messages, onSend }) {
 // —— Main App ——
 export default function App() {
   const [activePatient, setActivePatient] = useState(1);
-  const { connected, vitals, alertMsg, messages, history, sendFeedback } = useMqtt(activePatient);
+  const { connected, vitals, alertMsg, messages, history, stats, sendFeedback } = useMqtt(activePatient);
   const isEmergency = alertMsg?.includes('DANGER');
   const fingerOn = vitals.bpm !== '--';
 
@@ -196,6 +196,39 @@ export default function App() {
           />
         </div>
 
+        {/* 24-Hour Stats Summary */}
+        {stats && stats.totalReadings > 0 && (
+          <div className="glass-card" style={{ padding: '16px 24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: '1.1rem' }}>📋</span>
+              <h3 style={{ fontSize: '0.9rem', fontWeight: 700 }}>24-Hour Summary — Patient 0{activePatient}</h3>
+              <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: '#4a6a8a' }}>{stats.totalReadings} records</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, fontSize: '0.8rem' }}>
+              <div style={{ padding: '10px 14px', background: 'rgba(255,69,96,0.08)', borderRadius: 10, border: '1px solid rgba(255,69,96,0.15)' }}>
+                <div style={{ color: '#ff4560', fontWeight: 700, marginBottom: 4 }}>❤️ BPM</div>
+                <div style={{ color: '#e8f4ff' }}>Min: {stats.bpm?.min} / Max: {stats.bpm?.max}</div>
+                <div style={{ color: '#7fa6c9' }}>Avg: {stats.bpm?.avg}</div>
+              </div>
+              <div style={{ padding: '10px 14px', background: 'rgba(61,158,255,0.08)', borderRadius: 10, border: '1px solid rgba(61,158,255,0.15)' }}>
+                <div style={{ color: '#3d9eff', fontWeight: 700, marginBottom: 4 }}>🫁 SpO₂</div>
+                <div style={{ color: '#e8f4ff' }}>Min: {stats.spo2?.min}% / Max: {stats.spo2?.max}%</div>
+                <div style={{ color: '#7fa6c9' }}>Avg: {stats.spo2?.avg}%</div>
+              </div>
+              <div style={{ padding: '10px 14px', background: 'rgba(254,176,25,0.08)', borderRadius: 10, border: '1px solid rgba(254,176,25,0.15)' }}>
+                <div style={{ color: '#feb019', fontWeight: 700, marginBottom: 4 }}>🌡️ Temp</div>
+                <div style={{ color: '#e8f4ff' }}>Min: {stats.temp?.min}°C / Max: {stats.temp?.max}°C</div>
+                <div style={{ color: '#7fa6c9' }}>Avg: {stats.temp?.avg}°C</div>
+              </div>
+              <div style={{ padding: '10px 14px', background: 'rgba(168,85,247,0.08)', borderRadius: 10, border: '1px solid rgba(168,85,247,0.15)' }}>
+                <div style={{ color: '#a855f7', fontWeight: 700, marginBottom: 4 }}>🚨 Alerts</div>
+                <div style={{ color: '#e8f4ff', fontSize: '1.4rem', fontWeight: 800 }}>{stats.alerts}</div>
+                <div style={{ color: '#7fa6c9' }}>in last 24h</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* No finger message */}
         {!fingerOn && connected && (
           <div className="no-data-overlay">
@@ -209,7 +242,7 @@ export default function App() {
           {/* Vitals Chart */}
           <div className="glass-card">
             <div className="chart-panel-header">
-              <h3>📈 Vitals History (Live)</h3>
+              <h3>📈 Vitals History (Live + Stored)</h3>
               <div className="chart-legend">
                 <div className="legend-item"><div className="legend-dot" style={{ background: '#ff4560' }}/> BPM</div>
                 <div className="legend-item"><div className="legend-dot" style={{ background: '#3d9eff' }}/> SpO₂</div>
