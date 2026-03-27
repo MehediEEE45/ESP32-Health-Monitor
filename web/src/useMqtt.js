@@ -10,17 +10,22 @@ const MQTT_OPTIONS = {
   reconnectPeriod: 3000,
 };
 
-const TOPICS = {
-  bpm:      'group08/health/bpm',
-  spo2:     'group08/health/spo2',
-  temp:     'group08/health/temp',
-  alert:    'group08/health/alert',
-  status:   'group08/health/status',
-  feedback: 'group08/health/feedback',
-};
+// Generates the MQTT topic set for a given patient number
+export function getTopics(patient) {
+  const base = `group08/health/patient${patient}`;
+  return {
+    bpm:      `${base}/bpm`,
+    spo2:     `${base}/spo2`,
+    temp:     `${base}/temp`,
+    alert:    `${base}/alert`,
+    status:   `${base}/status`,
+    feedback: `${base}/feedback`,
+  };
+}
 
-export function useMqtt() {
+export function useMqtt(activePatient) {
   const clientRef = useRef(null);
+  const activePatientRef = useRef(activePatient);
   const [connected, setConnected] = useState(false);
   const [vitals, setVitals] = useState({ bpm: '--', spo2: '--', temp: '--' });
   const [alertMsg, setAlertMsg] = useState('NORMAL');
@@ -29,30 +34,60 @@ export function useMqtt() {
   ]);
   const [history, setHistory] = useState([]);
 
+  // Keep ref in sync with prop
+  useEffect(() => { activePatientRef.current = activePatient; }, [activePatient]);
+
+  // When activePatient changes, re-subscribe to new topics & reset vitals
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!client || !connected) return;
+
+    // Unsubscribe all old patient topics
+    for (let p = 1; p <= 3; p++) {
+      Object.values(getTopics(p)).forEach(t => client.unsubscribe(t));
+    }
+    // Subscribe to new patient topics
+    const topics = getTopics(activePatient);
+    Object.values(topics).forEach(t => client.subscribe(t));
+
+    // Reset vitals for fresh patient view
+    setVitals({ bpm: '--', spo2: '--', temp: '--' });
+    setAlertMsg('NORMAL');
+    setHistory([]);
+    setMessages(m => [...m, {
+      type: 'system',
+      text: `Switched to Patient ${activePatient}`,
+      time: new Date().toLocaleTimeString()
+    }]);
+  }, [activePatient, connected]);
+
+  // Initial MQTT connection (runs once)
   useEffect(() => {
     const client = mqtt.connect(BROKER_URL, MQTT_OPTIONS);
     clientRef.current = client;
 
     client.on('connect', () => {
       setConnected(true);
-      Object.values(TOPICS).forEach(t => client.subscribe(t));
+      // Subscribe to initial patient topics
+      const topics = getTopics(activePatientRef.current);
+      Object.values(topics).forEach(t => client.subscribe(t));
     });
 
     client.on('disconnect', () => setConnected(false));
-    client.on('error', () => setConnected(false));
-    client.on('offline', () => setConnected(false));
+    client.on('error',      () => setConnected(false));
+    client.on('offline',    () => setConnected(false));
 
     client.on('message', (topic, payload) => {
       const val = payload.toString();
       const now = new Date();
+      const TOPICS = getTopics(activePatientRef.current);
 
       setVitals(prev => {
         const next = { ...prev };
-        if (topic === TOPICS.bpm)  { next.bpm  = val; }
-        if (topic === TOPICS.spo2) { next.spo2 = val; }
-        if (topic === TOPICS.temp) { next.temp = val; }
+        if (topic === TOPICS.bpm)  next.bpm  = val;
+        if (topic === TOPICS.spo2) next.spo2 = val;
+        if (topic === TOPICS.temp) next.temp = val;
 
-        // Build history point whenever any vital arrives
         if (topic === TOPICS.bpm || topic === TOPICS.spo2 || topic === TOPICS.temp) {
           setHistory(h => {
             const point = {
@@ -61,7 +96,7 @@ export function useMqtt() {
               spo2: parseFloat(topic === TOPICS.spo2 ? val : prev.spo2) || 0,
               temp: parseFloat(topic === TOPICS.temp ? val : prev.temp) || 0,
             };
-            return [...h.slice(-29), point]; // keep last 30 points
+            return [...h.slice(-29), point];
           });
         }
         return next;
@@ -69,16 +104,17 @@ export function useMqtt() {
 
       if (topic === TOPICS.alert) setAlertMsg(val);
       if (topic === TOPICS.status) {
-        setMessages(m => [...m, { type: 'system', text: `Device: ${val}`, time: now.toLocaleTimeString() }]);
+        setMessages(m => [...m, { type: 'system', text: `Device P${activePatientRef.current}: ${val}`, time: now.toLocaleTimeString() }]);
       }
     });
 
     return () => { client.end(); };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendFeedback = useCallback((text) => {
     if (clientRef.current && text.trim()) {
-      clientRef.current.publish(TOPICS.feedback, text.trim());
+      const topic = getTopics(activePatientRef.current).feedback;
+      clientRef.current.publish(topic, text.trim());
       const time = new Date().toLocaleTimeString();
       setMessages(m => [...m, { type: 'doctor', text: text.trim(), time }]);
     }

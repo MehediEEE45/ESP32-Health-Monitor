@@ -4,6 +4,8 @@
  *  ESP32-S3 WROOM | MAX30102 | LM35 | OLED | Buzzer
  *  Course: EEE 330 | Group 08
  *  Protocol: MQTT with Multi-WiFi Failover
+ *  Features: Multi-Patient, Doctor Feedback on OLED,
+ *             Double-Press Button to Switch Patient
  * =====================================================
  */
 
@@ -11,29 +13,29 @@
 #include "heartRate.h"
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <PubSubClient.h> // Required for MQTT
+#include <PubSubClient.h>
 #include <WiFi.h>
-#include <WiFiClientSecure.h> // TLS
-#include <WiFiMulti.h>        // Required for multiple WiFi networks
+#include <WiFiClientSecure.h>
+#include <WiFiMulti.h>
 #include <Wire.h>
 
 // ==================== PIN DEFINITIONS ====================
-#define I2C_SDA_PIN 8
-#define I2C_SCL_PIN 9
-#define LM35_PIN 4 // ADC1_CH3
-#define BUZZER_PIN 5
+#define I2C_SDA_PIN  8
+#define I2C_SCL_PIN  9
+#define LM35_PIN     4   // ADC1_CH3
+#define BUZZER_PIN   5
+#define BUTTON_PIN   6   // Push button (wired between GPIO6 and GND)
 
 // ==================== OLED CONFIG ========================
-#define SCREEN_WIDTH 128
+#define SCREEN_WIDTH  128
 #define SCREEN_HEIGHT 64
-#define OLED_RESET -1
-#define OLED_ADDR 0x3C
+#define OLED_RESET    -1
+#define OLED_ADDR     0x3C
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // ==================== MAX30102 CONFIG ====================
 MAX30105 particleSensor;
 
-// Heart Rate averaging
 #define RATE_SIZE 8
 byte rates[RATE_SIZE];
 byte rateSpot = 0;
@@ -41,7 +43,6 @@ long lastBeat = 0;
 float beatsPerMinute = 0;
 int beatAvg = 0;
 
-// SpO2 using Red/IR ratio
 long redValue = 0;
 int spO2 = 0;
 
@@ -53,11 +54,20 @@ bool tempBufferFull = false;
 float temperatureC = 0.0;
 
 // ==================== HEALTH THRESHOLDS ==================
-#define TEMP_HIGH_THRESH 38.0 // Celsius
-#define BPM_HIGH_THRESH 120
-#define BPM_LOW_THRESH 40
-#define SPO2_LOW_THRESH 90
-#define IR_FINGER_THRESH 50000 // IR value when finger is placed
+#define TEMP_HIGH_THRESH  38.0
+#define BPM_HIGH_THRESH   120
+#define BPM_LOW_THRESH    40
+#define SPO2_LOW_THRESH   90
+#define IR_FINGER_THRESH  50000
+
+// ==================== PATIENT (Multi-Patient Support) ====
+#define MAX_PATIENTS 3
+int currentPatient = 1;   // Default: Patient 1
+
+// Returns MQTT topic string for given patient and field
+String patientTopic(int patient, const char* field) {
+  return String("group08/health/patient") + patient + "/" + field;
+}
 
 // ==================== WI-FI (MULTIPLE) ===================
 WiFiMulti wifiMulti;
@@ -66,115 +76,189 @@ WiFiClientSecure espClient;
 // ==================== MQTT CONFIG ========================
 PubSubClient mqttClient(espClient);
 
-// Update this with your broker. Using HiveMQ public broker for demo.
 const char *mqtt_server = "3af2a7e75dca42e1ba1e09b3d71602f9.s1.eu.hivemq.cloud";
-const int mqtt_port = 8883;
-const char *mqtt_user = "Health";
-const char *mqtt_pass = "Me107645";
-
-// Configure MQTT Topics
-const char *topic_bpm = "group08/health/bpm";
-const char *topic_spo2 = "group08/health/spo2";
-const char *topic_temp = "group08/health/temp";
-const char *topic_alert = "group08/health/alert";
+const int   mqtt_port   = 8883;
+const char *mqtt_user   = "Health";
+const char *mqtt_pass   = "Me107645";
 
 // ==================== TIMING (ms) ========================
-#define SENSOR_INTERVAL 100
-#define DISPLAY_INTERVAL 500
-#define CLOUD_INTERVAL 1000 // Send to MQTT every 1 second (MQTT is fast)
-#define SERIAL_INTERVAL 2000
-#define BUZZER_BEEP_ON 200
-#define BUZZER_BEEP_OFF 300
+#define SENSOR_INTERVAL    100
+#define DISPLAY_INTERVAL   500
+#define CLOUD_INTERVAL     1000
+#define SERIAL_INTERVAL    2000
+#define BUZZER_BEEP_ON     200
+#define BUZZER_BEEP_OFF    300
+#define FEEDBACK_SHOW_MS   5000   // How long to show doctor feedback on OLED
 
-unsigned long lastSensorRead = 0;
+unsigned long lastSensorRead    = 0;
 unsigned long lastDisplayUpdate = 0;
-unsigned long lastCloudUpdate = 0;
-unsigned long lastSerialLog = 0;
-unsigned long lastBuzzerToggle = 0;
-unsigned long lastMqttRetry = 0;
+unsigned long lastCloudUpdate   = 0;
+unsigned long lastSerialLog     = 0;
+unsigned long lastBuzzerToggle  = 0;
+unsigned long lastMqttRetry     = 0;
 bool buzzerState = false;
+
+// ==================== BUTTON / DOUBLE-PRESS ==============
+#define DOUBLE_PRESS_GAP 400  // Max ms between two presses to count as double
+
+unsigned long lastButtonPress = 0;
+bool waitingForSecondPress = false;
+
+// ==================== DOCTOR FEEDBACK ON OLED ============
+String feedbackMsg = "";
+unsigned long feedbackShownAt = 0;
+bool showingFeedback = false;
 
 // ==================== STATE FLAGS ========================
 bool fingerDetected = false;
-bool isEmergency = false;
-bool wifiConnected = false;
+bool isEmergency    = false;
+bool wifiConnected  = false;
 
-// ==================== BOOT ANIMATION ====================
+// ==================== HELPERS ============================
 void showBootScreen(const char *msg, int delayMs) {
   display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-
-  // Draw border
   display.drawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SSD1306_WHITE);
-
-  // Title
   display.setCursor(14, 4);
   display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
   display.print("Health Monitor");
-
-  // Separator line
   display.drawLine(4, 14, 123, 14, SSD1306_WHITE);
-
-  // Message centered
   display.setCursor(10, 28);
-  display.setTextSize(1);
   display.print(msg);
-
   display.display();
   delay(delayMs);
 }
 
-// ==================== SETUP WI-FI & MQTT =================
-void setupWiFi() {
-  Serial.println("\n[WiFi] Configuring Known Networks...");
+// Show patient number on OLED briefly
+void showPatientChange() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(25, 8);
+  display.print("PATIENT SWITCH");
+  display.drawLine(4, 20, 123, 20, SSD1306_WHITE);
+  display.setCursor(35, 30);
+  display.setTextSize(2);
+  display.print("P");
+  display.print(currentPatient);
+  display.setTextSize(1);
+  display.setCursor(20, 52);
+  display.print("Double-press again");
+  display.display();
+  delay(1500);
+}
 
-  espClient.setInsecure(); // Required for HiveMQ Cloud TLS connection
+// ==================== BUTTON HANDLER =====================
+void handleButton() {
+  // Button is INPUT_PULLUP: LOW means pressed
+  if (digitalRead(BUTTON_PIN) == LOW) {
+    unsigned long now = millis();
 
-  // ADD ALL YOUR NETWORKS HERE:
-  wifiMulti.addAP("MiM", "Ha20202021");          // Network 1
-  wifiMulti.addAP("SecondNetwork", "Password2"); // Network 2
-  wifiMulti.addAP("ThirdNetwork", "Password3");  // Network 3
+    // Debounce: ignore very rapid noise
+    if (now - lastButtonPress < 80) return;
 
-  showBootScreen("Connecting WiFi...", 0);
-  Serial.print("[WiFi] Attempting connection...");
+    if (waitingForSecondPress && (now - lastButtonPress) < DOUBLE_PRESS_GAP) {
+      // ---- DOUBLE PRESS DETECTED ----
+      waitingForSecondPress = false;
 
-  // The ESP32 will auto-scan and connect to the strongest known network
-  if (wifiMulti.run() == WL_CONNECTED) {
-    Serial.println("");
-    Serial.println("[WiFi] Connected to: " + WiFi.SSID());
-    Serial.println("[WiFi] IP Address:   " + WiFi.localIP().toString());
-    showBootScreen("WiFi Connected!", 800);
-    wifiConnected = true;
-  } else {
-    Serial.println("\n[WiFi] Connection Failed. Offline Mode.");
-    showBootScreen("WiFi Failed (Offline)", 1000);
-    wifiConnected = false;
+      // Unsubscribe from old patient feedback topic
+      mqttClient.unsubscribe(patientTopic(currentPatient, "feedback").c_str());
+
+      // Advance patient number (wraps around)
+      currentPatient = (currentPatient % MAX_PATIENTS) + 1;
+      Serial.printf("[BUTTON] Double-press! Switched to Patient %d\n", currentPatient);
+
+      // Subscribe to new patient feedback topic
+      mqttClient.subscribe(patientTopic(currentPatient, "feedback").c_str());
+
+      // Clear vitals for fresh patient
+      beatAvg = 0; spO2 = 0; temperatureC = 0;
+      for (byte i = 0; i < RATE_SIZE; i++) rates[i] = 0;
+
+      showPatientChange();
+    } else {
+      // First press — start waiting for a second
+      waitingForSecondPress = true;
+    }
+
+    lastButtonPress = now;
+
+    // Wait for button release to avoid repeat triggers
+    while (digitalRead(BUTTON_PIN) == LOW) delay(10);
+  }
+
+  // If waited too long, cancel single-press wait
+  if (waitingForSecondPress && (millis() - lastButtonPress) > DOUBLE_PRESS_GAP) {
+    waitingForSecondPress = false;
+    Serial.println("[BUTTON] Single press (no action)");
   }
 }
 
-void reconnectMQTT() {
-  if (WiFi.status() != WL_CONNECTED)
-    return; // Must have Wi-Fi first
+// ==================== MQTT CALLBACK =====================
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String msg = "";
+  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
 
+  String feedbackTopic = patientTopic(currentPatient, "feedback");
+  String statusTopic   = patientTopic(currentPatient, "status");
+
+  if (String(topic) == feedbackTopic) {
+    Serial.printf("[FEEDBACK] Doctor says: %s\n", msg.c_str());
+    feedbackMsg = msg;
+    feedbackShownAt = millis();
+    showingFeedback = true;
+    // Quick beep to alert doctor message arrived
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(80);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(50);
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(80);
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+
+  if (String(topic) == statusTopic) {
+    Serial.printf("[STATUS] %s\n", msg.c_str());
+  }
+}
+
+// ==================== WIFI CONNECT =======================
+void connectWiFi() {
+  espClient.setInsecure();
+  wifiMulti.addAP("MiM", "Ha20202021");
+  wifiMulti.addAP("SecondNetwork", "Password2");
+  wifiMulti.addAP("mehedi", "12345678");
+
+  showBootScreen("Connecting WiFi...", 0);
+  Serial.print("[WiFi] Connecting...");
+
+  int attempts = 0;
+  while (wifiMulti.run() != WL_CONNECTED && attempts < 20) {
+    delay(500); Serial.print("."); attempts++;
+  }
+  wifiConnected = (WiFi.status() == WL_CONNECTED);
+  Serial.println(wifiConnected ? "\n[WiFi] Connected!" : "\n[WiFi] Failed. Offline.");
+  showBootScreen(wifiConnected ? "WiFi Connected!" : "WiFi Failed (Offline)", 800);
+}
+
+// ==================== MQTT RECONNECT =====================
+void reconnectMQTT() {
+  if (WiFi.status() != WL_CONNECTED) return;
   if (!mqttClient.connected()) {
     unsigned long now = millis();
-    if (now - lastMqttRetry > 5000) { // Retry every 5 seconds without blocking
+    if (now - lastMqttRetry > 5000) {
       lastMqttRetry = now;
-      Serial.print("[MQTT] Connecting to broker...");
-
-      // Create a random client ID to avoid collisions
-      String clientId = "ESP32Health-";
-      clientId += String(random(0xffff), HEX);
-
-      // Attempt connection with username and password
+      Serial.print("[MQTT] Connecting...");
+      String clientId = "ESP32Health-" + String(random(0xffff), HEX);
       if (mqttClient.connect(clientId.c_str(), mqtt_user, mqtt_pass)) {
         Serial.println("CONNECTED!");
-        mqttClient.publish("group08/health/status", "SYSTEM ONLINE");
+        // Subscribe to current patient topics
+        mqttClient.subscribe(patientTopic(currentPatient, "feedback").c_str());
+        mqttClient.subscribe(patientTopic(currentPatient, "status").c_str());
+        // Announce device online
+        mqttClient.publish(patientTopic(currentPatient, "status").c_str(), "DEVICE ONLINE");
       } else {
-        Serial.print("failed, rc=");
-        Serial.print(mqttClient.state());
-        Serial.println(" (retrying later)");
+        Serial.printf("failed, rc=%d (retrying later)\n", mqttClient.state());
       }
     }
   }
@@ -185,47 +269,33 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n===== Health Monitor Starting =====");
 
-  // I2C for ESP32-S3
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-
-  // Buzzer
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
+  pinMode(BUTTON_PIN, INPUT_PULLUP); // Button wired to GND
 
   analogReadResolution(12);
 
-  // OLED Init
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-    Serial.println("[OLED] SSD1306 allocation failed!");
-    for (;;)
-      ;
+    Serial.println("[OLED] Failed!"); for (;;);
   }
+
   showBootScreen("Initializing...", 1000);
 
-  // MAX30102 Init
   if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
-    Serial.println("[MAX30102] Sensor not found!");
-    showBootScreen("MAX30102 ERROR!", 0);
-    for (;;)
-      ;
+    Serial.println("[MAX30102] Not found!"); showBootScreen("MAX30102 ERROR!", 0); for (;;);
   }
-  Serial.println("[MAX30102] Sensor initialized.");
-
-  // Optimal settings
   particleSensor.setup(60, 4, 2, 100, 411, 4096);
   particleSensor.setPulseAmplitudeRed(0x0A);
   particleSensor.setPulseAmplitudeIR(60);
-
   showBootScreen("Sensor Ready!", 500);
 
-  for (int i = 0; i < TEMP_SAMPLES; i++)
-    tempReadings[i] = 0;
+  for (int i = 0; i < TEMP_SAMPLES; i++) tempReadings[i] = 0;
 
-  // Wi-Fi Setup
-  setupWiFi();
+  connectWiFi();
 
-  // MQTT Server binding
   mqttClient.setServer(mqtt_server, mqtt_port);
+  mqttClient.setCallback(mqttCallback); // Register callback for incoming messages
 
   showBootScreen("System Ready!", 1000);
   Serial.println("===== System Ready =====\n");
@@ -236,19 +306,18 @@ void loop() {
   unsigned long now = millis();
 
   // ----- WiFi & MQTT Maintenance -----
-  // wifiMulti.run() automatically reconnects to the strongest AP if
-  // disconnected
   if (wifiMulti.run() != WL_CONNECTED) {
     wifiConnected = false;
   } else {
     wifiConnected = true;
-    if (!mqttClient.connected()) {
-      reconnectMQTT();
-    }
-    mqttClient.loop(); // Important! Keeps the MQTT connection alive
+    if (!mqttClient.connected()) reconnectMQTT();
+    mqttClient.loop(); // Process incoming messages (feedback!)
   }
 
-  // ---- 1. Continuous Heart Beat Detection ----
+  // ----- Button Handling -----
+  handleButton();
+
+  // ---- 1. Heart Beat Detection ----
   long irValue = particleSensor.getIR();
   redValue = particleSensor.getRed();
   fingerDetected = (irValue > IR_FINGER_THRESH);
@@ -257,177 +326,157 @@ void loop() {
     long delta = now - lastBeat;
     lastBeat = now;
     beatsPerMinute = 60.0 / (delta / 1000.0);
-
     if (beatsPerMinute > 30 && beatsPerMinute < 255) {
       rates[rateSpot++] = (byte)beatsPerMinute;
       rateSpot %= RATE_SIZE;
       beatAvg = 0;
-      for (byte x = 0; x < RATE_SIZE; x++)
-        beatAvg += rates[x];
+      for (byte x = 0; x < RATE_SIZE; x++) beatAvg += rates[x];
       beatAvg /= RATE_SIZE;
     }
   }
 
-  // ---- 2. Periodic Sensor Reads (100ms) ----
+  // ---- 2. Sensor Reads (100ms) ----
   if (now - lastSensorRead >= SENSOR_INTERVAL) {
     lastSensorRead = now;
 
-    // -- LM35 with averaging --
     int rawADC = analogRead(LM35_PIN);
     float voltage = rawADC * (3.3 / 4095.0);
     float currentTemp = voltage * 100.0;
-
     tempReadings[tempIndex++] = currentTemp;
-    if (tempIndex >= TEMP_SAMPLES) {
-      tempIndex = 0;
-      tempBufferFull = true;
-    }
+    if (tempIndex >= TEMP_SAMPLES) { tempIndex = 0; tempBufferFull = true; }
     float sum = 0;
     int count = tempBufferFull ? TEMP_SAMPLES : tempIndex;
-    for (int i = 0; i < count; i++)
-      sum += tempReadings[i];
-    if (count > 0)
-      temperatureC = sum / count;
+    for (int i = 0; i < count; i++) sum += tempReadings[i];
+    if (count > 0) temperatureC = sum / count;
 
-    // -- SpO2 Estimation --
     if (fingerDetected && redValue > 0) {
       float ratio = (float)redValue / (float)irValue;
       int calcSpO2 = (int)(110.0 - 25.0 * ratio);
-      if (calcSpO2 > 100)
-        calcSpO2 = 100;
-      if (calcSpO2 < 0)
-        calcSpO2 = 0;
+      if (calcSpO2 > 100) calcSpO2 = 100;
+      if (calcSpO2 < 0)   calcSpO2 = 0;
       spO2 = (spO2 == 0) ? calcSpO2 : (spO2 * 3 + calcSpO2) / 4;
     }
 
-    if (!fingerDetected) {
-      beatAvg = 0;
-      spO2 = 0;
-      beatsPerMinute = 0;
-    }
+    if (!fingerDetected) { beatAvg = 0; spO2 = 0; beatsPerMinute = 0; }
   }
 
   // ---- 3. Alert Logic ----
-  isEmergency = false;
-  if (fingerDetected) {
-    if (temperatureC > TEMP_HIGH_THRESH || beatAvg > BPM_HIGH_THRESH ||
-        (beatAvg > 0 && beatAvg < BPM_LOW_THRESH) ||
-        (spO2 > 0 && spO2 < SPO2_LOW_THRESH)) {
-      isEmergency = true;
-    }
-  }
+  isEmergency = fingerDetected && (
+    temperatureC > TEMP_HIGH_THRESH ||
+    beatAvg > BPM_HIGH_THRESH ||
+    (beatAvg > 0 && beatAvg < BPM_LOW_THRESH) ||
+    (spO2 > 0 && spO2 < SPO2_LOW_THRESH)
+  );
 
   if (isEmergency) {
-    if (now - lastBuzzerToggle >=
-        (buzzerState ? BUZZER_BEEP_ON : BUZZER_BEEP_OFF)) {
+    if (now - lastBuzzerToggle >= (buzzerState ? BUZZER_BEEP_ON : BUZZER_BEEP_OFF)) {
       lastBuzzerToggle = now;
       buzzerState = !buzzerState;
       digitalWrite(BUZZER_PIN, buzzerState ? HIGH : LOW);
     }
   } else {
-    if (buzzerState) {
-      buzzerState = false;
-      digitalWrite(BUZZER_PIN, LOW);
-    }
+    if (buzzerState) { buzzerState = false; digitalWrite(BUZZER_PIN, LOW); }
   }
 
-  // ---- 4. OLED Display Update (500ms) ----
+  // ---- 4. OLED Display (500ms) ----
   if (now - lastDisplayUpdate >= DISPLAY_INTERVAL) {
     lastDisplayUpdate = now;
     display.clearDisplay();
 
-    display.fillRect(0, 0, SCREEN_WIDTH, 12, SSD1306_WHITE);
-    display.setTextColor(SSD1306_BLACK);
-    display.setTextSize(1);
-    display.setCursor(4, 2);
-    display.print("Health Monitor");
+    // Auto-clear feedback after FEEDBACK_SHOW_MS
+    if (showingFeedback && (now - feedbackShownAt > FEEDBACK_SHOW_MS)) {
+      showingFeedback = false;
+    }
 
-    display.setCursor(85, 2);
-    if (!wifiConnected)
-      display.print(" No WiFi");
-    else if (!mqttClient.connected())
-      display.print(" No MQTT");
-    else
-      display.print("  ONLINE");
-
-    display.setTextColor(SSD1306_WHITE);
-
-    if (fingerDetected) {
+    if (showingFeedback) {
+      // ---- DOCTOR FEEDBACK SCREEN ----
+      display.fillRect(0, 0, SCREEN_WIDTH, 12, SSD1306_WHITE);
+      display.setTextColor(SSD1306_BLACK);
+      display.setTextSize(1);
+      display.setCursor(20, 2);
+      display.print("Doctor Message");
+      display.setTextColor(SSD1306_WHITE);
       display.setCursor(0, 16);
-      display.print("\x03 BPM:  ");
-      display.setTextSize(2);
-      display.setCursor(50, 14);
-      display.print(beatAvg);
-      display.setTextSize(1);
-
-      display.setCursor(0, 33);
-      display.print("  SpO2: ");
-      display.print(spO2);
-      display.print(" %");
-
-      display.setCursor(0, 44);
-      display.print("  Temp: ");
-      display.print(temperatureC, 1);
-      display.print(" C");
-
-      if (isEmergency) {
-        display.fillRect(0, 55, SCREEN_WIDTH, 9, SSD1306_WHITE);
-        display.setTextColor(SSD1306_BLACK);
-        display.setCursor(20, 56);
-        display.print("!! ALERT !!");
-        display.setTextColor(SSD1306_WHITE);
-      } else {
-        display.drawLine(0, 54, SCREEN_WIDTH, 54, SSD1306_WHITE);
-        display.setCursor(25, 56);
-        display.print("All Normal");
-      }
+      // Word wrap: print up to 21 chars per line across 3 lines
+      display.print(feedbackMsg.substring(0, 21));
+      display.setCursor(0, 26);
+      if (feedbackMsg.length() > 21) display.print(feedbackMsg.substring(21, 42));
+      display.setCursor(0, 36);
+      if (feedbackMsg.length() > 42) display.print(feedbackMsg.substring(42, 63));
+      // Countdown bar
+      float progress = 1.0 - ((float)(now - feedbackShownAt) / FEEDBACK_SHOW_MS);
+      display.drawRect(0, 55, SCREEN_WIDTH, 8, SSD1306_WHITE);
+      display.fillRect(0, 55, (int)(SCREEN_WIDTH * progress), 8, SSD1306_WHITE);
     } else {
-      display.setCursor(10, 25);
+      // ---- NORMAL VITALS SCREEN ----
+      // Header
+      display.fillRect(0, 0, SCREEN_WIDTH, 12, SSD1306_WHITE);
+      display.setTextColor(SSD1306_BLACK);
       display.setTextSize(1);
-      display.print("Place your finger");
-      display.setCursor(15, 38);
-      display.print("on the sensor...");
+      display.setCursor(4, 2);
+      display.print("P");
+      display.print(currentPatient);
+      display.print(" | Health Monitor");
+
+      display.setTextColor(SSD1306_WHITE);
+      // Status top-right
+      display.setCursor(85, 2);
+      if (!wifiConnected) display.print(" No WiFi");
+      else if (!mqttClient.connected()) display.print(" No MQTT");
+      else display.print("  ONLINE");
+
+      display.setTextColor(SSD1306_WHITE);
+
+      if (fingerDetected) {
+        display.setCursor(0, 16);
+        display.print("\x03 BPM:  ");
+        display.setTextSize(2);
+        display.setCursor(50, 14);
+        display.print(beatAvg);
+        display.setTextSize(1);
+
+        display.setCursor(0, 33);
+        display.print("  SpO2: "); display.print(spO2); display.print(" %");
+
+        display.setCursor(0, 44);
+        display.print("  Temp: "); display.print(temperatureC, 1); display.print(" C");
+
+        if (isEmergency) {
+          display.fillRect(0, 55, SCREEN_WIDTH, 9, SSD1306_WHITE);
+          display.setTextColor(SSD1306_BLACK);
+          display.setCursor(20, 56); display.print("!! ALERT !!");
+          display.setTextColor(SSD1306_WHITE);
+        } else {
+          display.drawLine(0, 54, SCREEN_WIDTH, 54, SSD1306_WHITE);
+          display.setCursor(25, 56); display.print("All Normal");
+        }
+      } else {
+        display.setCursor(10, 25);
+        display.print("Place finger on");
+        display.setCursor(15, 38);
+        display.print("the sensor...");
+      }
     }
     display.display();
   }
 
-  // ---- 5. MQTT Cloud Upload (1000ms updates) ----
-  // MQTT is lightweight, so we can send data much faster than ThingSpeak!
+  // ---- 5. MQTT Publish (1s) ----
   if (now - lastCloudUpdate >= CLOUD_INTERVAL) {
     lastCloudUpdate = now;
-
-    // Send data to MQTT as long as finger is detected, even if calculating BPM
     if (wifiConnected && mqttClient.connected() && fingerDetected) {
-      // Convert numbers to Strings, then to char arrays for MQTT publishing
-      String strBPM = String(beatAvg);
-      String strSpO2 = String(spO2);
-      String strTemp = String(temperatureC, 1);
-
-      mqttClient.publish(topic_bpm, strBPM.c_str());
-      mqttClient.publish(topic_spo2, strSpO2.c_str());
-      mqttClient.publish(topic_temp, strTemp.c_str());
-
-      if (isEmergency)
-        mqttClient.publish(topic_alert, "DANGER: HIGH VITALS!");
-      else
-        mqttClient.publish(topic_alert, "NORMAL");
-
-      Serial.println("[MQTT] Published vitals.");
+      mqttClient.publish(patientTopic(currentPatient, "bpm").c_str(), String(beatAvg).c_str());
+      mqttClient.publish(patientTopic(currentPatient, "spo2").c_str(), String(spO2).c_str());
+      mqttClient.publish(patientTopic(currentPatient, "temp").c_str(), String(temperatureC, 1).c_str());
+      mqttClient.publish(patientTopic(currentPatient, "alert").c_str(), isEmergency ? "DANGER: HIGH VITALS!" : "NORMAL");
+      Serial.printf("[MQTT] Published: Patient %d\n", currentPatient);
     }
   }
 
   // ---- 6. Serial Diagnostics (2s) ----
   if (now - lastSerialLog >= SERIAL_INTERVAL) {
     lastSerialLog = now;
-    Serial.print("[DATA] Finger:");
-    Serial.print(fingerDetected ? "YES" : "NO");
-    Serial.print(" | BPM:");
-    Serial.print(beatAvg);
-    Serial.print(" | SpO2:");
-    Serial.print(spO2);
-    Serial.print(" | Temp:");
-    Serial.print(temperatureC, 1);
-    Serial.print(" | MQTT:");
-    Serial.println(mqttClient.connected() ? "ON" : "OFF");
+    Serial.printf("[DATA] P%d | Finger:%s | BPM:%d | SpO2:%d | Temp:%.1f | MQTT:%s\n",
+      currentPatient, fingerDetected ? "YES":"NO",
+      beatAvg, spO2, temperatureC, mqttClient.connected() ? "ON":"OFF");
   }
 }

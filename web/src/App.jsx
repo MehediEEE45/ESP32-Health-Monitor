@@ -104,7 +104,8 @@ function FeedbackPanel({ messages, onSend }) {
 
 // —— Main App ——
 export default function App() {
-  const { connected, vitals, alertMsg, messages, history, sendFeedback } = useMqtt();
+  const [activePatient, setActivePatient] = useState(1);
+  const { connected, vitals, alertMsg, messages, history, sendFeedback } = useMqtt(activePatient);
   const isEmergency = alertMsg?.includes('DANGER');
   const fingerOn = vitals.bpm !== '--';
 
@@ -146,10 +147,14 @@ export default function App() {
 
         {/* Patient Selector */}
         <div className="patient-bar">
-          {['Patient 01 — Group 08', 'Patient 02', 'Patient 03'].map((p, i) => (
-            <div key={p} className={`patient-chip ${i === 0 ? 'active' : ''}`}>
-              <div className="patient-avatar">{p[8]}{p[9]}</div>
-              {p}
+          {[1, 2, 3].map((p) => (
+            <div
+              key={p}
+              className={`patient-chip ${activePatient === p ? 'active' : ''}`}
+              onClick={() => setActivePatient(p)}
+            >
+              <div className="patient-avatar">P{p}</div>
+              Patient 0{p}
             </div>
           ))}
         </div>
