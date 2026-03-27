@@ -268,6 +268,41 @@ export default function App() {
             )}
           </div>
 
+          {/* Previous Data Table */}
+          <div className="glass-card" style={{ display: 'flex', flexDirection: 'column' }}>
+            <div className="chart-panel-header">
+              <h3>🗄️ Previous Data Log (Patient 0{activePatient})</h3>
+            </div>
+            {history.length > 0 ? (
+              <div style={{ flex: 1, overflowY: 'auto', maxHeight: '280px', fontSize: '0.8rem' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                  <thead style={{ position: 'sticky', top: 0, background: 'rgba(8,12,20,0.95)', color: '#7fa6c9' }}>
+                    <tr>
+                      <th style={{ padding: '8px 4px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>Time</th>
+                      <th style={{ padding: '8px 4px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>BPM</th>
+                      <th style={{ padding: '8px 4px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>SpO₂</th>
+                      <th style={{ padding: '8px 4px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>Temp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...history].reverse().map((row, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                        <td style={{ padding: '8px 4px', color: '#e8f4ff' }}>{row.time}</td>
+                        <td style={{ padding: '8px 4px', color: '#ff4560', fontWeight: 600 }}>{row.bpm}</td>
+                        <td style={{ padding: '8px 4px', color: '#3d9eff' }}>{row.spo2}%</td>
+                        <td style={{ padding: '8px 4px', color: '#feb019' }}>{row.temp}°C</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4a6a8a', fontSize: '0.85rem' }}>
+                No previous data available yet...
+              </div>
+            )}
+          </div>
+
           {/* Doctor Feedback */}
           <FeedbackPanel messages={messages} onSend={sendFeedback} />
         </div>
