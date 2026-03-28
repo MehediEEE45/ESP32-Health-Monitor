@@ -21,8 +21,13 @@
 #include <Wire.h>
 
 // ==================== PIN DEFINITIONS ====================
-#define I2C_SDA_PIN  8
-#define I2C_SCL_PIN  9
+// Sensor I2C Bus (Wire 0)
+#define SENSOR_SDA_PIN  8
+#define SENSOR_SCL_PIN  9
+
+// OLED I2C Bus (Wire 1)
+#define OLED_SDA_PIN    10
+#define OLED_SCL_PIN    11
 #define LM35_PIN     4   // ADC1_CH3
 #define BUZZER_PIN   5
 #define BUTTON_PIN   6   // Push button (wired between GPIO6 and GND)
@@ -32,7 +37,7 @@
 #define SCREEN_HEIGHT 64
 #define OLED_RESET    -1
 #define OLED_ADDR     0x3C
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire1, OLED_RESET);
 
 // ==================== MAX30102 CONFIG ====================
 MAX30105 particleSensor;
@@ -271,7 +276,9 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n===== Health Monitor Starting =====");
 
-  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  // Initialize both hardware I2C buses
+  Wire.begin(SENSOR_SDA_PIN, SENSOR_SCL_PIN); // Sensors on Wire 0
+  Wire1.begin(OLED_SDA_PIN, OLED_SCL_PIN);    // Display on Wire 1
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
   pinMode(BUTTON_PIN, INPUT_PULLUP); // Button wired to GND
