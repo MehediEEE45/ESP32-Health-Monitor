@@ -45,12 +45,17 @@ MAX30105 particleSensor;
 #define RATE_SIZE 8
 byte rates[RATE_SIZE];
 byte rateSpot = 0;
+byte rateFilled = 0;    // how many slots actually have real data
 long lastBeat = 0;
 float beatsPerMinute = 0;
 int beatAvg = 0;
 
 long redValue = 0;
 int spO2 = 0;
+
+// SpO2 AC/DC filter state
+long redDC = 0, irDC = 0;          // running DC (average)
+long redAC = 0, irAC = 0;          // running AC magnitude
 
 // ==================== LM35 / TEMPERATURE =================
 #define TEMP_SAMPLES 10
@@ -179,7 +184,9 @@ void handleButton() {
 
       // Clear vitals for fresh patient
       beatAvg = 0; spO2 = 0; temperatureF = 0;
+      rateFilled = 0; rateSpot = 0;
       for (byte i = 0; i < RATE_SIZE; i++) rates[i] = 0;
+      redDC = 0; irDC = 0; redAC = 0; irAC = 0;
 
       showPatientChange();
     } else {
@@ -342,15 +349,21 @@ void loop() {
   fingerDetected = (irValue > IR_FINGER_THRESH);
 
   if (fingerDetected && checkForBeat(irValue)) {
-    long delta = now - lastBeat;
-    lastBeat = now;
+    unsigned long beatNow = millis();   // capture exact time of beat, not stale `now`
+    long delta = beatNow - lastBeat;
+    lastBeat = beatNow;
     beatsPerMinute = 60.0 / (delta / 1000.0);
     if (beatsPerMinute > 30 && beatsPerMinute < 255) {
       rates[rateSpot++] = (byte)beatsPerMinute;
       rateSpot %= RATE_SIZE;
+      if (rateFilled < RATE_SIZE) rateFilled++;  // track how many slots are real
       beatAvg = 0;
-      for (byte x = 0; x < RATE_SIZE; x++) beatAvg += rates[x];
-      beatAvg /= RATE_SIZE;
+      for (byte x = 0; x < rateFilled; x++) {    // only average real samples
+        // walk backwards from rateSpot to get most recent rateFilled samples
+        byte idx = (rateSpot + RATE_SIZE - 1 - x) % RATE_SIZE;
+        beatAvg += rates[idx];
+      }
+      beatAvg /= rateFilled;
     }
   }
 
@@ -370,14 +383,35 @@ void loop() {
     if (count > 0) temperatureF = sum / count;
 
     if (fingerDetected && redValue > 0) {
-      float ratio = (float)redValue / (float)irValue;
-      int calcSpO2 = (int)(110.0 - 25.0 * ratio);
-      if (calcSpO2 > 100) calcSpO2 = 100;
-      if (calcSpO2 < 0)   calcSpO2 = 0;
-      spO2 = (spO2 == 0) ? calcSpO2 : (spO2 * 3 + calcSpO2) / 4;
+      // Update DC baseline with slow EMA (α ~= 1/128)
+      redDC = (redDC * 127 + redValue) / 128;
+      irDC  = (irDC  * 127 + irValue)  / 128;
+
+      // AC component = deviation from DC baseline
+      long redACSample = redValue - redDC;
+      long irACSample  = irValue  - irDC;
+
+      // Running RMS-style magnitude (slow EMA of abs values)
+      redAC = (redAC * 15 + abs(redACSample)) / 16;
+      irAC  = (irAC  * 15 + abs(irACSample))  / 16;
+
+      // Proper SpO2 R-value: (AC_red/DC_red) / (AC_ir/DC_ir)
+      if (irAC > 0 && irDC > 0 && redDC > 0) {
+        float R = ((float)redAC / (float)redDC) / ((float)irAC / (float)irDC);
+        // Empirical calibration curve: SpO2 = 104 - 17*R
+        int calcSpO2 = (int)(104.0 - 17.0 * R);
+        if (calcSpO2 > 100) calcSpO2 = 100;
+        if (calcSpO2 < 70)  calcSpO2 = 70;  // physiological floor
+        spO2 = (spO2 == 0) ? calcSpO2 : (spO2 * 3 + calcSpO2) / 4;
+      }
     }
 
-    if (!fingerDetected) { beatAvg = 0; spO2 = 0; beatsPerMinute = 0; }
+    if (!fingerDetected) {
+      beatAvg = 0; spO2 = 0; beatsPerMinute = 0;
+      rateFilled = 0; rateSpot = 0;
+      for (byte i = 0; i < RATE_SIZE; i++) rates[i] = 0;
+      redDC = 0; irDC = 0; redAC = 0; irAC = 0;
+    }
   }
 
   // ---- 3. Alert Logic ----
