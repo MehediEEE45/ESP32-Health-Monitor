@@ -188,11 +188,11 @@ export default function App() {
             icon="🌡️"
             label="Body Temperature"
             value={vitals.temp}
-            unit="°C"
-            sublabel={tempVal > 38 ? '⚠ Fever' : tempVal > 0 ? 'Normal' : '—'}
-            barPct={tempVal > 0 ? ((tempVal - 35) / 8) * 100 : 0}
+            unit="°F"
+            sublabel={tempVal > 100.4 ? '⚠ Fever' : tempVal > 0 ? 'Normal' : '—'}
+            barPct={tempVal > 0 ? ((tempVal - 95) / 14) * 100 : 0}
             barColor="linear-gradient(90deg, #feb019, #ff6b35)"
-            isAlert={tempVal > 38}
+            isAlert={tempVal > 100.4}
           />
         </div>
 
@@ -217,8 +217,8 @@ export default function App() {
               </div>
               <div style={{ padding: '10px 14px', background: 'rgba(254,176,25,0.08)', borderRadius: 10, border: '1px solid rgba(254,176,25,0.15)' }}>
                 <div style={{ color: '#feb019', fontWeight: 700, marginBottom: 4 }}>🌡️ Temp</div>
-                <div style={{ color: '#e8f4ff' }}>Min: {stats.temp?.min}°C / Max: {stats.temp?.max}°C</div>
-                <div style={{ color: '#7fa6c9' }}>Avg: {stats.temp?.avg}°C</div>
+                <div style={{ color: '#e8f4ff' }}>Min: {stats.temp?.min}°F / Max: {stats.temp?.max}°F</div>
+                <div style={{ color: '#7fa6c9' }}>Avg: {stats.temp?.avg}°F</div>
               </div>
               <div style={{ padding: '10px 14px', background: 'rgba(168,85,247,0.08)', borderRadius: 10, border: '1px solid rgba(168,85,247,0.15)' }}>
                 <div style={{ color: '#a855f7', fontWeight: 700, marginBottom: 4 }}>🚨 Alerts</div>
@@ -290,7 +290,7 @@ export default function App() {
                         <td style={{ padding: '8px 4px', color: '#e8f4ff' }}>{row.time}</td>
                         <td style={{ padding: '8px 4px', color: '#ff4560', fontWeight: 600 }}>{row.bpm}</td>
                         <td style={{ padding: '8px 4px', color: '#3d9eff' }}>{row.spo2}%</td>
-                        <td style={{ padding: '8px 4px', color: '#feb019' }}>{row.temp}°C</td>
+                        <td style={{ padding: '8px 4px', color: '#feb019' }}>{row.temp}°F</td>
                       </tr>
                     ))}
                   </tbody>

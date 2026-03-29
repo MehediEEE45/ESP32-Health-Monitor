@@ -28,9 +28,9 @@
 // OLED I2C Bus (Wire 1)
 #define OLED_SDA_PIN    10
 #define OLED_SCL_PIN    11
-#define LM35_PIN     4   // ADC1_CH3
-#define BUZZER_PIN   5
-#define BUTTON_PIN   6   // Push button (wired between GPIO6 and GND)
+#define LM35_PIN     15   // ADC1_CH3
+#define BUZZER_PIN   3
+#define BUTTON_PIN   4   // Push button (wired between GPIO6 and GND)
 
 // ==================== OLED CONFIG ========================
 #define SCREEN_WIDTH  128
@@ -57,10 +57,10 @@ int spO2 = 0;
 float tempReadings[TEMP_SAMPLES];
 byte tempIndex = 0;
 bool tempBufferFull = false;
-float temperatureC = 0.0;
+float temperatureF = 0.0;
 
 // ==================== HEALTH THRESHOLDS ==================
-#define TEMP_HIGH_THRESH  38.0
+#define TEMP_HIGH_THRESH  100.4
 #define BPM_HIGH_THRESH   120
 #define BPM_LOW_THRESH    40
 #define SPO2_LOW_THRESH   90
@@ -178,7 +178,7 @@ void handleButton() {
       mqttClient.subscribe(patientTopic(currentPatient, "feedback").c_str());
 
       // Clear vitals for fresh patient
-      beatAvg = 0; spO2 = 0; temperatureC = 0;
+      beatAvg = 0; spO2 = 0; temperatureF = 0;
       for (byte i = 0; i < RATE_SIZE; i++) rates[i] = 0;
 
       showPatientChange();
@@ -360,13 +360,14 @@ void loop() {
 
     int rawADC = analogRead(LM35_PIN);
     float voltage = rawADC * (3.3 / 4095.0);
-    float currentTemp = voltage * 100.0;
+    float currentTempC = voltage * 100.0;
+    float currentTemp = currentTempC * 1.8 + 32.0;
     tempReadings[tempIndex++] = currentTemp;
     if (tempIndex >= TEMP_SAMPLES) { tempIndex = 0; tempBufferFull = true; }
     float sum = 0;
     int count = tempBufferFull ? TEMP_SAMPLES : tempIndex;
     for (int i = 0; i < count; i++) sum += tempReadings[i];
-    if (count > 0) temperatureC = sum / count;
+    if (count > 0) temperatureF = sum / count;
 
     if (fingerDetected && redValue > 0) {
       float ratio = (float)redValue / (float)irValue;
@@ -381,7 +382,7 @@ void loop() {
 
   // ---- 3. Alert Logic ----
   isEmergency = fingerDetected && (
-    temperatureC > TEMP_HIGH_THRESH ||
+    temperatureF > TEMP_HIGH_THRESH ||
     beatAvg > BPM_HIGH_THRESH ||
     (beatAvg > 0 && beatAvg < BPM_LOW_THRESH) ||
     (spO2 > 0 && spO2 < SPO2_LOW_THRESH)
@@ -458,7 +459,7 @@ void loop() {
         display.print("  SpO2: "); display.print(spO2); display.print(" %");
 
         display.setCursor(0, 44);
-        display.print("  Temp: "); display.print(temperatureC, 1); display.print(" C");
+        display.print("  Temp: "); display.print(temperatureF, 1); display.print(" F");
 
         if (isEmergency) {
           display.fillRect(0, 55, SCREEN_WIDTH, 9, SSD1306_WHITE);
@@ -485,7 +486,7 @@ void loop() {
     if (wifiConnected && mqttClient.connected() && fingerDetected) {
       mqttClient.publish(patientTopic(currentPatient, "bpm").c_str(), String(beatAvg).c_str());
       mqttClient.publish(patientTopic(currentPatient, "spo2").c_str(), String(spO2).c_str());
-      mqttClient.publish(patientTopic(currentPatient, "temp").c_str(), String(temperatureC, 1).c_str());
+      mqttClient.publish(patientTopic(currentPatient, "temp").c_str(), String(temperatureF, 1).c_str());
       mqttClient.publish(patientTopic(currentPatient, "alert").c_str(), isEmergency ? "DANGER: HIGH VITALS!" : "NORMAL");
       Serial.printf("[MQTT] Published: Patient %d\n", currentPatient);
     }
@@ -496,6 +497,6 @@ void loop() {
     lastSerialLog = now;
     Serial.printf("[DATA] P%d | Finger:%s | BPM:%d | SpO2:%d | Temp:%.1f | MQTT:%s\n",
       currentPatient, fingerDetected ? "YES":"NO",
-      beatAvg, spO2, temperatureC, mqttClient.connected() ? "ON":"OFF");
+      beatAvg, spO2, temperatureF, mqttClient.connected() ? "ON":"OFF");
   }
 }
